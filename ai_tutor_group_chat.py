@@ -141,7 +141,7 @@ async def main():
     selection_function = KernelFunctionFromPrompt(
         function_name="selection",
         prompt=f"""
-Determine which participant takes the next turn in the conversation based on context and need.
+Determine which participant takes the next turn in the conversation based on current state.
 State only the name of the participant to take the next turn without explanation.
 
 Choose only from these participants:
@@ -149,30 +149,38 @@ Choose only from these participants:
 - {REASONING_NAME}
 
 Rules for selection:
-- If the message is from a user (student), the {TUTOR_NAME} should respond first.
+- If the message is from a user (student), the {TUTOR_NAME} should respond.
 - If the message is from the {TUTOR_NAME} and they're asking for help analyzing a student's misunderstanding, the {REASONING_NAME} should respond.
 - If the message is from the {REASONING_NAME}, the {TUTOR_NAME} should respond to incorporate the reasoning insights.
-- By default, the {TUTOR_NAME} should respond to the user.
+- In general, avoid selecting the same agent multiple times in a row unless there's a clear handoff between agents.
+- If the conversation would naturally return to the user, select {TUTOR_NAME} and the termination strategy will handle ending the conversation.
 
 HISTORY:
-{{$lastmessage}}
+{{$history}}
 """,
     )
     
-    # Define termination function
+    # Define termination function - make it more strict about when to terminate
     termination_function = KernelFunctionFromPrompt(
         function_name="termination",
-        prompt="""
-Determine if this conversation thread should be terminated.
-Respond with 'yes' only if one of these criteria are met:
-1. The user has explicitly indicated they want to end the conversation
-2. The question has been fully answered and the tutor has provided a complete, satisfactory response
-3. The conversation has naturally reached a conclusion
+        prompt=f"""
+Determine if this agent conversation should terminate and return control to the user.
+Analyze the conversation history.
 
-Otherwise, respond with 'no'.
+Respond with 'yes' if ANY of these criteria are met:
+1. The {TUTOR_NAME} has provided a complete response to the user's question that doesn't ask for more input from {REASONING_NAME}
+2. The conversation between agents has reached a natural conclusion
+3. The same agent has responded multiple times in a row (excluding clarifying questions to the other agent)
+4. The {TUTOR_NAME} has responded after receiving input from the {REASONING_NAME}
+
+Respond with 'no' ONLY if the agents are still in the middle of a productive exchange where:
+- The {TUTOR_NAME} has explicitly asked the {REASONING_NAME} for help and is waiting for a response
+- The {REASONING_NAME} has just provided analysis and the {TUTOR_NAME} hasn't yet responded
+
+Be strict about termination - after the Tutor has given a complete response to the user's question, return 'yes'.
 
 HISTORY:
-{{$lastmessage}}
+{{$history}}
 """,
     )
     
@@ -187,7 +195,7 @@ HISTORY:
             function=selection_function,
             kernel=kernel,
             result_parser=lambda result: str(result.value[0]).strip() if result.value is not None else TUTOR_NAME,
-            history_variable_name="lastmessage",
+            history_variable_name="history",  # Changed from "lastmessage" to "history"
             history_reducer=history_reducer,
         ),
         termination_strategy=KernelFunctionTerminationStrategy(
@@ -195,13 +203,13 @@ HISTORY:
             function=termination_function,
             kernel=kernel,
             result_parser=lambda result: "yes" in str(result.value[0]).lower(),
-            history_variable_name="lastmessage",
-            maximum_iterations=15,
+            history_variable_name="history",  # Changed from "lastmessage" to "history"
+            maximum_iterations=3,  # Reduced from 15 to 3 to prevent excessive responses
             history_reducer=history_reducer,
         ),
     )
     
-    # Welcome message
+    # Welcome message and main loop
     print("\n" + "="*50)
     print("Welcome to your AI Tutor Group Chat!")
     print("="*50)
@@ -210,8 +218,7 @@ HISTORY:
     print("Ask questions or provide answers for me to evaluate!\n")
     
     # Main conversation loop
-    is_complete = False
-    while not is_complete:
+    while True:
         # Get user input
         user_input = input("\nYou: ")
         if not user_input:
@@ -228,26 +235,62 @@ HISTORY:
             print("[Conversation has been reset]")
             continue
             
-        # Add user message to chat
-        await chat.add_chat_message(ChatMessageContent(role=AuthorRole.USER, content=user_input))
-        
-        # Process conversation
         try:
-            async for response in chat.invoke():
-                if response is None or not response.name:
-                    continue
-                print(f"\n# {response.name}:\n{response.content}")
-                
-            # Check if conversation is complete
-            if chat.is_complete:
-                is_complete = True
-                print("\nConversation complete. Type 'reset' to start a new conversation or 'exit' to quit.")
+            # Important: Make sure the chat is in a clean state before adding new messages
+            # Reset the chat's internal state
+            if hasattr(chat, '_was_invoked'):
+                chat._was_invoked = False  # Reset the invocation flag
             
-            # Reset completion flag for next iteration
+            # Add user message to chat
+            await chat.add_chat_message(ChatMessageContent(role=AuthorRole.USER, content=user_input))
+            
+            # Process conversation
+            seen_responses = set()  # Track responses to avoid duplicates
+            response_count = 0
+            try:
+                async for response in chat.invoke():
+                    if response is None or not response.name:
+                        continue
+                        
+                    # Skip duplicate responses
+                    response_key = f"{response.name}:{response.content[:50]}"
+                    if response_key in seen_responses:
+                        continue
+                        
+                    seen_responses.add(response_key)
+                    print(f"\n# {response.name}:\n{response.content}")
+                    response_count += 1
+                    
+                    # Force termination after the Tutor has responded once to a user message
+                    if response.name == TUTOR_NAME and response_count >= 1:
+                        # Only force termination if there was no Reasoning agent involved
+                        if not any(r.startswith(f"{REASONING_NAME}:") for r in seen_responses):
+                            break
+            except Exception as inner_e:
+                print(f"Error during agent invocation: {inner_e}")
+                # If we got a failure about USER not being an agent, we can ignore it
+                if "USER" in str(inner_e):
+                    print("[Completed conversation turn]")
+                else:
+                    raise  # Re-raise if it's not the USER agent error
+                
+            # Important: Explicitly finalize this conversation turn
+            chat.is_complete = True
+            
+            # Reset for the next conversation turn
+            await asyncio.sleep(0.1)  # Small delay to ensure state is properly reset
+            if hasattr(chat, '_was_invoked'):
+                chat._was_invoked = False
             chat.is_complete = False
             
         except Exception as e:
             print(f"Error during conversation: {e}")
+            # Try to recover by resetting the chat
+            try:
+                await chat.reset()
+                print("[Chat has been reset due to an error]")
+            except Exception:
+                print("[Unable to reset chat. Please restart the application]")
     
 if __name__ == "__main__":
     asyncio.run(main())
