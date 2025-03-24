@@ -3,27 +3,22 @@ from fastapi.responses import StreamingResponse
 import uvicorn
 import os
 import json
-import openai
+import asyncio
 from dotenv import load_dotenv
 from pydantic import BaseModel
-from typing import List
+from typing import List, Dict, Any
+
+# Import our custom tutor pattern
+from tutor_pattern import process_chat_message, reset_chat
 
 # Load environment variables
 load_dotenv()
 
-# Setup Azure OpenAI client
-client = openai.AzureOpenAI(
-    azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT_4o"),
-    api_key=os.getenv("AZURE_OPENAI_API_KEY_4o"),
-    api_version=os.getenv("AZURE_OPENAI_API_VERSION_4o"),
-)
-DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_DEPLOYMENT_4o")
-
 # Initialize FastAPI 
 app = FastAPI(
-    title="Azure OpenAI Streaming Chat",
+    title="AI Tutor API",
     version="1.0",
-    description="Simple streaming chat API with Azure OpenAI"
+    description="Streaming AI Tutor API with FastAPI"
 )
 
 # Define request models
@@ -36,26 +31,39 @@ class ChatRequest(BaseModel):
 
 @app.post("/chat/stream")
 async def chat_stream(chat_request: ChatRequest):
-    """Endpoint for streaming chat responses"""
+    """Endpoint for streaming chat responses from AI Tutor"""
     
-    # Convert Pydantic models to dictionaries for OpenAI
-    messages = [{"role": msg.role, "content": msg.content} for msg in chat_request.messages]
+    # Extract the last user message from the conversation history
+    last_user_message = None
+    for msg in reversed(chat_request.messages):
+        if msg.role == "user":
+            last_user_message = msg.content
+            break
+    
+    if not last_user_message:
+        return StreamingResponse(
+            iter([f"data: {json.dumps({'error': 'No user message found'})}\n\n"]),
+            media_type="text/event-stream"
+        )
     
     async def generate():
         try:
-            # Create streaming response from Azure OpenAI
-            stream = client.chat.completions.create(
-                model=DEPLOYMENT_NAME,
-                messages=messages,
-                stream=True,
-                temperature=0.7,
-            )
+            # Process the message through our tutor system
+            last_agent = None
             
-            # Stream each chunk back to the client
-            for chunk in stream:
-                if chunk.choices and chunk.choices[0].delta.content is not None:
-                    content = chunk.choices[0].delta.content
-                    yield f"data: {json.dumps({'content': content})}\n\n"
+            async for chunk in process_chat_message(last_user_message):
+                if "error" in chunk:
+                    yield f"data: {json.dumps({'error': chunk['error']})}\n\n"
+                    continue
+                
+                # If this is a new agent, send the agent name
+                if last_agent != chunk["agent"]:
+                    last_agent = chunk["agent"]
+                    yield f"data: {json.dumps({'agent': chunk['agent']})}\n\n"
+                
+                # Send the content chunk
+                if chunk["content"]:
+                    yield f"data: {json.dumps({'content': chunk['content']})}\n\n"
             
             # Send completion signal
             yield "data: [DONE]\n\n"
@@ -68,25 +76,16 @@ async def chat_stream(chat_request: ChatRequest):
         media_type="text/event-stream"
     )
 
+@app.post("/chat/reset")
+async def reset():
+    """Reset the chat history"""
+    await reset_chat()
+    return {"status": "success", "message": "Chat reset successfully"}
+
 @app.post("/chat")
 async def chat(chat_request: ChatRequest):
-    """Endpoint for non-streaming chat responses"""
-    
-    # Convert Pydantic models to dictionaries for OpenAI
-    messages = [{"role": msg.role, "content": msg.content} for msg in chat_request.messages]
-    
-    try:
-        # Get response from Azure OpenAI
-        response = client.chat.completions.create(
-            model=DEPLOYMENT_NAME,
-            messages=messages,
-            temperature=0.7,
-        )
-        
-        return {"response": response.choices[0].message.content}
-    
-    except Exception as e:
-        return {"error": str(e)}
+    """Endpoint for non-streaming chat responses - not recommended for tutor agent"""
+    return {"error": "Please use the streaming endpoint /chat/stream for better experience with the AI Tutor"}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="localhost", port=8000)
