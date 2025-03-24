@@ -68,13 +68,18 @@ async def on_message(message: cl.Message):
     messages.append({"role": "user", "content": message.content})
     cl.user_session.set("messages", messages)
     
+    # Check if this is a reset command
+    if message.content.lower() in ["reset", "restart", "clear"]:
+        await reset_chat()
+        return
+    
     # Prepare to send to backend API
     payload = {
         "messages": [{"role": m["role"], "content": m["content"]} for m in messages]
     }
     
-    # Create message elements to update
-    msg = cl.Message(author="AI Tutor", content="Thinking...")
+    # Create message elements to update - Updated for newer Chainlit API
+    msg = cl.Message(content="Thinking...", author="AI Tutor")
     await msg.send()
     
     # Stream the response from the API
@@ -92,12 +97,18 @@ async def on_message(message: cl.Message):
             headers={"Accept": "text/event-stream", "Content-Type": "application/json"}
         ) as response:
             if response.status_code == 404:
-                await msg.update(content=f"Error: API endpoint not found. Make sure the backend server is running and has the correct endpoints defined.")
+                # Using new approach for updating messages
+                new_msg = cl.Message(content=f"Error: API endpoint not found. Make sure the backend server is running and has the correct endpoints defined.", author="System")
+                await new_msg.send()
+                await msg.remove()  # Remove the thinking message
                 debug_request(debug_url, payload, "404 Not Found")
                 return
                 
             if response.status_code != 200:
-                await msg.update(content=f"Error: Received status code {response.status_code} from API. Response: {response.text}")
+                # Using new approach for updating messages
+                new_msg = cl.Message(content=f"Error: Received status code {response.status_code} from API. Response: {response.text}", author="System")
+                await new_msg.send()
+                await msg.remove()  # Remove the thinking message
                 debug_request(debug_url, payload, f"Status {response.status_code}: {response.text}")
                 return
                 
@@ -122,15 +133,20 @@ async def on_message(message: cl.Message):
                                 # If this is a new agent and not the first one, add a separator
                                 if current_agent and new_agent != "Tutor":
                                     full_response += f"\n\n**{new_agent}'s Analysis:**\n"
-                                # Set the author for the first time or when changing agents
+                                # Set the author - handle author change differently
                                 if not current_agent:
-                                    await msg.update(author=new_agent)
-                                current_agent = new_agent
+                                    current_agent = new_agent
+                                    # Create a new message with the correct author
+                                    await msg.remove()  # Remove the thinking message
+                                    msg = cl.Message(content="", author=new_agent)
+                                    await msg.send()
                         
                         # Handle content chunks
                         if "content" in data:
                             full_response += data["content"]
-                            await msg.update(content=full_response)
+                            # Update content - using the newer Chainlit API approach
+                            msg.content = full_response
+                            await msg.update()
                         
                         # Handle errors
                         if "error" in data:
@@ -142,29 +158,34 @@ async def on_message(message: cl.Message):
                         continue
                     
     except requests.exceptions.ConnectionError:
-        await msg.update(content="Error: Cannot connect to the API server. Please ensure the backend is running.")
+        # Create a new message instead of updating
+        await msg.remove()
+        await cl.Message(content="Error: Cannot connect to the API server. Please ensure the backend is running.", author="System").send()
         return
     except Exception as e:
-        await msg.update(content=f"Error: {str(e)}")
+        # Create a new message instead of updating
+        await msg.remove()
+        await cl.Message(content=f"Error: {str(e)}", author="System").send()
         return
     
     # If we didn't get any response, show error
     if not full_response:
-        await msg.update(content="Error: No response received from the server.")
+        await msg.remove()
+        await cl.Message(content="Error: No response received from the server.", author="System").send()
         return
     
     # Add assistant response to history
     messages.append({"role": "assistant", "content": full_response})
     cl.user_session.set("messages", messages)
     
-    # Add a button to reset the conversation
-    await cl.Button(
-        name="reset",
-        label="Reset Conversation"
-    ).send()
+    # # Add a message with reset instructions instead of a button
+    # await cl.Message(
+    #     content="*Type 'reset' to start a new conversation*",
+    #     author="System"
+    # ).send()
 
-@cl.action_callback("reset")
-async def reset_conversation(action):
+# Simple function to reset the chat
+async def reset_chat():
     """Reset the conversation."""
     # Clear local message history
     cl.user_session.set("messages", [])
