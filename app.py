@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import StreamingResponse
 import uvicorn
 import os
@@ -28,6 +28,11 @@ class ChatMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     messages: List[ChatMessage]
+
+@app.get("/")
+async def root():
+    """Health check endpoint"""
+    return {"status": "ok", "message": "AI Tutor API is running"}
 
 @app.post("/chat/stream")
 async def chat_stream(chat_request: ChatRequest):
@@ -88,4 +93,4 @@ async def chat(chat_request: ChatRequest):
     return {"error": "Please use the streaming endpoint /chat/stream for better experience with the AI Tutor"}
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="localhost", port=8000)
+    uvicorn.run(app, host="localhost", port=8001)  # Changed port from 8000 to 8001

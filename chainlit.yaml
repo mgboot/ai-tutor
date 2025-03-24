@@ -1,0 +1,22 @@
+# Chainlit configuration file
+
+# Chat UI customization
+ui:
+  name: AI Tutor
+  description: "Your intelligent tutor with reasoning capabilities"
+  hide_cot: false
+  default_collapse_content: false
+  theme:
+    primary: "#5D87FF"
+  
+# Initial readme content
+markdown: |
+  # AI Tutor
+  
+  Welcome to your AI Tutor experience! This tutor can:
+  
+  - Answer your academic questions
+  - Provide explanations with examples
+  - Help identify misconceptions in your understanding
+  
+  Start by asking a question or sharing a concept you'd like to understand better.
