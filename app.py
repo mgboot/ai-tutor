@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, Response
+from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import os
 import json
@@ -21,6 +22,15 @@ app = FastAPI(
     description="Streaming AI Tutor API with FastAPI"
 )
 
+# Add CORS middleware to handle cross-origin requests
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # Define request models
 class ChatMessage(BaseModel):
     role: str
@@ -28,6 +38,21 @@ class ChatMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     messages: List[ChatMessage]
+
+@app.get("/")
+async def root():
+    """Health check endpoint"""
+    return {"status": "ok", "message": "AI Tutor API is running"}
+
+# Add a route to handle WebSocket connection attempts
+@app.get("/ws/{path:path}")
+async def handle_websocket(path: str):
+    """Handle WebSocket connection attempts with a proper response"""
+    return Response(
+        content=json.dumps({"error": "WebSocket connections not supported"}),
+        media_type="application/json",
+        status_code=404
+    )
 
 @app.post("/chat/stream")
 async def chat_stream(chat_request: ChatRequest):
@@ -88,4 +113,10 @@ async def chat(chat_request: ChatRequest):
     return {"error": "Please use the streaming endpoint /chat/stream for better experience with the AI Tutor"}
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="localhost", port=8000)
+    # Configure logging to reduce noise from 404s
+    log_config = uvicorn.config.LOGGING_CONFIG
+    log_config["loggers"]["uvicorn.access"]["level"] = "WARNING"
+    
+    print("Starting FastAPI server on port 8000...")
+    print("Make sure your Streamlit client connects to http://localhost:8000")
+    uvicorn.run(app, host="localhost", port=8000, log_config=log_config)
