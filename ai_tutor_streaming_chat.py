@@ -77,7 +77,7 @@ def setup_kernel_with_models():
         )
     )
     
-    return kernel, primary_service_id, primary_model_id, secondary_service_id, secondary_model_id
+    return kernel
 
 async def main():
     # Load environment variables
@@ -89,9 +89,8 @@ async def main():
         print(error_message)
         return
     
-    # Create a single kernel instance for all agents
-    kernel, primary_service_id, primary_model_id, secondary_service_id, secondary_model_id = setup_kernel_with_models()
-
+    kernel = setup_kernel_with_models()
+    
     # Create Tutor agent
     tutor_agent = ChatCompletionAgent(
         kernel=kernel,
@@ -119,10 +118,7 @@ Guidelines:
         name=REASONING_NAME,
         instructions="""
 You are an advanced reasoning system specializing in breaking down complex problems inductively and helping to identify likely sources of misunderstanding.
-    Think step-by-step to analyze the following problem:
-
-    Problem: {{$problem}}
-
+Think step-by-step to analyze problems:
     1. Break down the problem into key components
     2. Work backwards from the incorrect answer to identify where student departed from correct method
     3. Show how, with a minimal number of steps, one would arrive at that *incorrect* answer
@@ -136,43 +132,50 @@ You are an advanced reasoning system specializing in breaking down complex probl
     selection_function = KernelFunctionFromPrompt(
         function_name="selection",
         prompt=f"""
-Choose the next agent to respond based on the conversation context.
-Only respond with the name of the agent without explanation.
+Examine the provided RESPONSE and choose the next participant.
+State only the name of the chosen participant without explanation.
+Never choose the participant named in the RESPONSE.
 
-Choose from:
+Choose only from these participants:
 - {TUTOR_NAME}
 - {REASONING_NAME}
 
 Rules:
-- If the message is from a user, the {TUTOR_NAME} should respond
-- If the message is from the {TUTOR_NAME} and explicitly asks for reasoning help, the {REASONING_NAME} should respond
-- If the message is from the {REASONING_NAME}, the {TUTOR_NAME} should respond
-- Never choose the same agent that just spoke unless there's a clear handoff
+- If RESPONSE is from user input, it is {TUTOR_NAME}'s turn.
+- If RESPONSE is by {TUTOR_NAME} and explicitly asks for reasoning help, the {REASONING_NAME}'s turn.
+- If RESPONSE is by {REASONING_NAME}, it is {TUTOR_NAME}'s turn.
 
-HISTORY:
+RESPONSE:
 {{{{$lastmessage}}}}
 """,
     )
+
+    # Define a termination function where the reviewer signals completion with "yes".
+    termination_keyword = "yes"
 
     # Define termination function - simplified
     termination_function = KernelFunctionFromPrompt(
         function_name="termination",
         prompt=f"""
-Determine if this agent conversation should end and return to the user.
-Answer with "yes" or "no" only.
+Examine the RESPONSE and determine whether the content has been deemed satisfactory.
+If the content is satisfactory, respond with a single word without explanation: {termination_keyword}.
+If specific suggestions are being provided, it is not satisfactory.
+If no correction is suggested, it is satisfactory.
 
-Respond with "yes" if:
-1. The {TUTOR_NAME} has provided a complete response to the user's question
-2. The {TUTOR_NAME} has responded after getting input from the {REASONING_NAME}
-3. The conversation between agents has reached a natural conclusion
-
-Respond with "no" only if:
-- The {TUTOR_NAME} has explicitly asked the {REASONING_NAME} for help and the {REASONING_NAME} hasn't yet responded
-
-HISTORY:
+RESPONSE:
 {{{{$lastmessage}}}}
 """,
     )
+# Determine if this agent conversation should end and return to the user.
+# Answer with "yes" or "no" only.
+
+# Respond with "yes" if:
+# 1. The {TUTOR_NAME} has provided a complete response to the user's question
+# 2. The {TUTOR_NAME} has responded after getting input from the {REASONING_NAME}
+# 3. The conversation between agents has reached a natural conclusion
+
+# Respond with "no" only if:
+# - The {TUTOR_NAME} has explicitly asked the {REASONING_NAME} for help and the {REASONING_NAME} hasn't yet responded
 
     history_reducer = ChatHistoryTruncationReducer(target_count=5)
 
@@ -191,7 +194,7 @@ HISTORY:
             agents=[tutor_agent],
             function=termination_function,
             kernel=kernel,
-            result_parser=lambda result: "yes" in str(result.value[0]).lower() if result.value and result.value[0] else True,
+            result_parser=lambda result: termination_keyword in str(result.value[0]).lower(),
             history_variable_name="lastmessage",
             maximum_iterations=3,
             history_reducer=history_reducer,
@@ -205,7 +208,8 @@ HISTORY:
     print("Type 'exit' to end the conversation, 'reset' to start over.")
     print("Ask questions or provide answers for me to evaluate!\n")
 
-    while True:
+    is_complete = False
+    while not is_complete:
         print()
         user_input = input("You: ").strip()
         if not user_input:
@@ -213,6 +217,7 @@ HISTORY:
 
         if user_input.lower() == "exit":
             print("\nThank you for learning with me! Goodbye.")
+            is_complete = True
             break
 
         if user_input.lower() == "reset":
@@ -220,9 +225,9 @@ HISTORY:
             print("[Conversation has been reset]")
             continue
 
-        # Create a new chat instance for each interaction to avoid state issues
-        if hasattr(chat, '_chat_history') and chat._chat_history:
-            chat.is_complete = False
+        # # Create a new chat instance for each interaction to avoid state issues
+        # if hasattr(chat, '_chat_history') and chat._chat_history:
+        #     chat.is_complete = False
 
         # Add user message to chat
         await chat.add_chat_message(message=user_input)
