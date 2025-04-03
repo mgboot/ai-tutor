@@ -27,7 +27,7 @@ agent that work together to provide educational assistance with pattern detectio
 
 # Define agent names
 TUTOR_NAME = "Tutor"
-REASONING_NAME = "Reasoning"
+EVALUATOR_NAME = "Evaluator"
 QUIZ_CREATOR_NAME = "QuizCreator"
 
 # Define termination keyword
@@ -199,7 +199,7 @@ You have multiple roles:
 2. EVALUATOR - You assess student answers and track their understanding
 3. INFO REVIEWER - When patterns of misunderstanding are identified, you provide targeted materials
 
-When needed, you can ask the Reasoning agent to analyze student misunderstandings in depth.
+When needed, you can ask the {{Ev}} agent to analyze student misunderstandings in depth.
 
 Guidelines:
 - Be friendly, patient, and educational in your responses
@@ -207,8 +207,8 @@ Guidelines:
 - Each question should be labeled with a topic or category
 - Each question should have four options (A, B, C, D)
 - When evaluating answers, clearly state if the answer is right or wrong
-- If a student gets multiple answers wrong in a row (3+), engage the Reasoning agent
-- After Reasoning identifies knowledge gaps, provide targeted materials focused on those gaps
+- If a student gets multiple answers wrong in a row (3+), engage the {EVALUATOR_NAME} agent
+- After {EVALUATOR_NAME} identifies knowledge gaps, provide targeted materials focused on those gaps
 - Create follow-up questions specifically addressing the areas of weakness
 - Always maintain a helpful, tutoring tone
 """,
@@ -218,9 +218,9 @@ Guidelines:
     # Create Reasoning agent
     reasoning_agent = ChatCompletionAgent(
         kernel=kernel,
-        name=REASONING_NAME,
+        name=EVALUATOR_NAME,
         instructions="""
-You are an advanced reasoning system specializing in analyzing student performance patterns to identify knowledge gaps.
+You are an advanced evaluator reasoning system specializing in analyzing student performance patterns to identify knowledge gaps.
 
 When analyzing quiz performance, follow these steps:
 1. Review the student's quiz history and pattern of answers
@@ -250,14 +250,13 @@ Never choose the participant named in the RESPONSE.
 
 Choose only from these participants:
 - {TUTOR_NAME}
-- {REASONING_NAME}
+- {EVALUATOR_NAME}
 
 Rules:
 - If RESPONSE is from user input, it is {TUTOR_NAME}'s turn.
-- If RESPONSE is by {TUTOR_NAME} and explicitly asks for reasoning help, then {REASONING_NAME}'s turn.
-- If STUDENT PERFORMANCE shows 3+ consecutive wrong answers, choose {REASONING_NAME} to analyze.
-- If RESPONSE is by {REASONING_NAME}, it is {TUTOR_NAME}'s turn.
-- If a pattern of topic-specific errors is detected, choose {REASONING_NAME} for analysis.
+- If STUDENT PERFORMANCE shows 3+ consecutive wrong answers, choose {EVALUATOR_NAME} to analyze.
+- If RESPONSE is by {EVALUATOR_NAME}, it is {TUTOR_NAME}'s turn.
+- If a pattern of topic-specific errors is detected, choose {EVALUATOR_NAME} for analysis.
 
 CURRENT STATE: {{{{$current_state}}}}
 CONSECUTIVE WRONG ANSWERS: {{{{$consecutive_wrong}}}}
@@ -279,7 +278,7 @@ Examine the RESPONSE and determine whether the content has been deemed satisfact
 If the content is satisfactory, respond with a single word without explanation: {termination_keyword}.
 If specific suggestions are being provided, it is not satisfactory.
 If no correction is suggested, it is satisfactory.
-If the Reasoning agent has just provided analysis and the Tutor hasn't responded yet, respond with: no.
+If the {EVALUATOR_NAME} agent has just provided analysis and the Tutor hasn't responded yet, respond with: no.
 
 RESPONSE:
 {{{{$lastmessage}}}}
