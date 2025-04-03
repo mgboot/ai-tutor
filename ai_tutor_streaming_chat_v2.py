@@ -30,6 +30,9 @@ TUTOR_NAME = "Tutor"
 REASONING_NAME = "Reasoning"
 QUIZ_CREATOR_NAME = "QuizCreator"
 
+# Define termination keyword
+termination_keyword = "complete"
+
 # Define states for the tutor system
 class TutorState(Enum):
     CHAT = "chat"
@@ -266,9 +269,6 @@ RESPONSE:
 """,
     )
 
-    # Define a termination function where the reviewer signals completion with "yes".
-    termination_keyword = "yes"
-
     # Define termination function - simplified
     termination_function = KernelFunctionFromPrompt(
         function_name="termination",
@@ -312,11 +312,21 @@ RESPONSE:
     print("Welcome to your AI Tutor Chat with Pattern Detection!")
     print("="*50)
     print("I'm your AI tutor with enhanced reasoning capabilities to help identify misunderstandings.")
-    print("Type 'exit' to end the conversation, 'reset' to start over.")
-    print("Type 'quiz me on [topic]' to start a quiz on any topic.")
-    print("Ask questions or provide answers for me to evaluate!\n")
+    print("\nWhat topic would you like to learn about today? I can create quizzes and provide information on many subjects.")
+    print("\nSome example topics you might choose:")
+    print("- Dog breeds (classification, characteristics, history)")
+    print("- Geometry (shapes, theorems, calculations)")
+    print("- World history (civilizations, events, figures)")
+    print("- Programming (languages, concepts, algorithms)")
+    print("- Chemistry (elements, reactions, concepts)")
+    print("- Literature (authors, periods, analysis)")
+    print("\nSimply tell me what interests you, or type 'quiz me on [topic]' to start a quiz right away.")
+    print("Type 'exit' to end the conversation, 'reset' to start over.\n")
 
     is_complete = False
+    topic_selected = False
+    selected_topic = ""
+    
     while not is_complete:
         print()
         user_input = input("You: ").strip()
@@ -332,8 +342,19 @@ RESPONSE:
             await chat.reset()
             student_tracker.reset()
             current_state = TutorState.CHAT
+            topic_selected = False
+            selected_topic = ""
             print("[Conversation has been reset]")
+            print("\nWhat topic would you like to learn about today?")
             continue
+        
+        # Set the topic if this is the first message and not a quiz command
+        if not topic_selected and not user_input.lower().startswith("quiz me on"):
+            selected_topic = user_input
+            topic_selected = True
+            print(f"\n[Topic selected: {selected_topic}]")
+            # Create a prompt to acknowledge the topic and offer help
+            user_input = f"I'd like to learn about {selected_topic}. Can you help me with that?"
         
         # Check if we need to process a quiz answer
         if current_state == TutorState.QUIZ:
@@ -392,7 +413,9 @@ RESPONSE:
             current_state = TutorState.QUIZ
             # Extract topic for quiz
             match = re.search(r"quiz me on\s+(.+)", user_input.lower())
-            topic = match.group(1) if match else "general knowledge"
+            topic = match.group(1) if match else selected_topic if selected_topic else "general knowledge"
+            selected_topic = topic
+            topic_selected = True
             
             # Reset the student tracker for new quiz
             student_tracker.reset()
