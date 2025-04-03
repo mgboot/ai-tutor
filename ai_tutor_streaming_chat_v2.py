@@ -21,14 +21,13 @@ from semantic_kernel.functions.kernel_arguments import KernelArguments
 
 """
 This sample demonstrates a streaming version of the AI Tutor Group Chat.
-It creates a chat interface where you can interact with a Tutor and a Reasoning 
+It creates a chat interface where you can interact with a Tutor and an Evaluator 
 agent that work together to provide educational assistance with pattern detection.
 """
 
 # Define agent names
 TUTOR_NAME = "Tutor"
 EVALUATOR_NAME = "Evaluator"
-QUIZ_CREATOR_NAME = "QuizCreator"
 
 # Define termination keyword
 termination_keyword = "complete"
@@ -199,7 +198,7 @@ You have multiple roles:
 2. EVALUATOR - You assess student answers and track their understanding
 3. INFO REVIEWER - When patterns of misunderstanding are identified, you provide targeted materials
 
-When needed, you can ask the {{Ev}} agent to analyze student misunderstandings in depth.
+When needed, you can ask the Evaluator agent to analyze student misunderstandings in depth.
 
 Guidelines:
 - Be friendly, patient, and educational in your responses
@@ -207,15 +206,15 @@ Guidelines:
 - Each question should be labeled with a topic or category
 - Each question should have four options (A, B, C, D)
 - When evaluating answers, clearly state if the answer is right or wrong
-- If a student gets multiple answers wrong in a row (3+), engage the {EVALUATOR_NAME} agent
-- After {EVALUATOR_NAME} identifies knowledge gaps, provide targeted materials focused on those gaps
+- If a student gets multiple answers wrong in a row (3+), engage the Evaluator agent
+- After Evaluator identifies knowledge gaps, provide targeted materials focused on those gaps
 - Create follow-up questions specifically addressing the areas of weakness
 - Always maintain a helpful, tutoring tone
 """,
         function_choice_behavior=FunctionChoiceBehavior.NoneInvoke(),
     )
 
-    # Create Reasoning agent
+    # Create Evaluator agent
     reasoning_agent = ChatCompletionAgent(
         kernel=kernel,
         name=EVALUATOR_NAME,
@@ -278,7 +277,7 @@ Examine the RESPONSE and determine whether the content has been deemed satisfact
 If the content is satisfactory, respond with a single word without explanation: {termination_keyword}.
 If specific suggestions are being provided, it is not satisfactory.
 If no correction is suggested, it is satisfactory.
-If the {EVALUATOR_NAME} agent has just provided analysis and the Tutor hasn't responded yet, respond with: no.
+If the Evaluator agent has just provided analysis and the Tutor hasn't responded yet, respond with: no.
 
 RESPONSE:
 {{{{$lastmessage}}}}
