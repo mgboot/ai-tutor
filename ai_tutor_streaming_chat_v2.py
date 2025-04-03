@@ -28,6 +28,8 @@ agent that work together to provide educational assistance with pattern detectio
 # Define agent names
 TUTOR_NAME = "Tutor"
 EVALUATOR_NAME = "Evaluator"
+QUIZ_CREATOR_NAME = "QuizCreator"
+RESOURCE_CURATOR_NAME = "ResourceCurator"
 
 # Define termination keyword
 termination_keyword = "complete"
@@ -37,6 +39,8 @@ class TutorState(Enum):
     CHAT = "chat"
     QUIZ = "quiz"
     REVIEW = "review"
+    RESOURCE = "resource"
+    EVALUATION = "evaluation"
 
 class StudentTracker:
     """Tracks student performance and identifies patterns in learning."""
@@ -185,37 +189,32 @@ async def main():
     # Track current state
     current_state = TutorState.CHAT
     
-    # Create Tutor agent
+    # Create Tutor agent (focused on conversation)
     tutor_agent = ChatCompletionAgent(
         kernel=kernel,
         name=TUTOR_NAME,
         instructions="""
-You are an intelligent tutor named AI Tutor. Your primary goal is to help users understand complex topics 
-and provide clear, educational responses to their questions, especially in evaluating quiz answers.
+You are an intelligent tutor named AI Tutor. Your primary role is to handle direct conversation with the student.
 
-You have multiple roles:
-1. QUIZ CREATOR - You can create multiple choice quizzes on topics the student is studying
-2. EVALUATOR - You assess student answers and track their understanding
-3. INFO REVIEWER - When patterns of misunderstanding are identified, you provide targeted materials
+Your responsibilities:
+- Be the main point of conversation with the student
+- Answer general knowledge questions with clear explanations
+- Provide friendly, accessible guidance
+- When a student is struggling, coordinate with other agents
+- Respond to the student's questions and maintain the conversation flow
+- Maintain a friendly, encouraging, and educational tone
+- Acknowledge correct answers and offer supportive feedback
+- When it's time for an assessment, hand over to the Quiz Creator
+- When evaluation is needed, refer to the Evaluator
+- When resources are needed, pass to the Resource Curator
 
-When needed, you can ask the Evaluator agent to analyze student misunderstandings in depth.
-
-Guidelines:
-- Be friendly, patient, and educational in your responses
-- Present ONLY ONE question at a time in quiz mode - wait for the user to answer before providing the next question
-- Each question should be labeled with a topic or category
-- Each question should have four options (A, B, C, D)
-- When evaluating answers, clearly state if the answer is right or wrong
-- If a student gets multiple answers wrong in a row (3+), engage the Evaluator agent
-- After Evaluator identifies knowledge gaps, provide targeted materials focused on those gaps
-- Create follow-up questions specifically addressing the areas of weakness
-- Always maintain a helpful, tutoring tone
+Focus on being conversational and maintaining rapport with the student. You're the "face" of the system.
 """,
         function_choice_behavior=FunctionChoiceBehavior.NoneInvoke(),
     )
 
-    # Create Evaluator agent
-    reasoning_agent = ChatCompletionAgent(
+    # Create Evaluator agent (focused on analyzing performance)
+    evaluator_agent = ChatCompletionAgent(
         kernel=kernel,
         name=EVALUATOR_NAME,
         instructions="""
@@ -235,27 +234,99 @@ For example, if a student consistently misidentifies terrier breeds as sporting 
 - What conceptual framework would help them better categorize the breeds
 
 Your goal is to provide actionable insights, not just identify errors.
+After your analysis, ask the Resource Curator to provide appropriate learning materials.
 """,
         function_choice_behavior=FunctionChoiceBehavior.NoneInvoke(),
     )
 
-    # Define selection function with enhanced logic
+    # Create Quiz Creator agent (focused on generating quizzes)
+    quiz_creator_agent = ChatCompletionAgent(
+        kernel=kernel,
+        name=QUIZ_CREATOR_NAME,
+        instructions="""
+You are a specialized quiz creator agent. Your role is to create effective educational quizzes.
+
+Your responsibilities:
+1. Generate clear, well-structured quiz questions on the requested topic
+2. Design multiple-choice quizzes with 4 options (A, B, C, D) per question
+3. Ask ONE question at a time - wait for the student to answer before providing the next question
+4. Always label each question with its topic/subtopic for categorization
+5. Create questions that test understanding, not just memorization
+6. Include a mix of difficulty levels to gauge comprehension depth
+7. For students who are struggling, create simpler questions on foundational concepts
+8. For advanced students, gradually increase difficulty
+9. When focusing on problem areas, create targeted questions on those specific topics
+10. Store the correct answer for each question for evaluation
+
+Example question format:
+Topic: [Specific Topic]
+Question: [Clear, well-formed question]
+A) [First option]
+B) [Second option]
+C) [Third option]
+D) [Fourth option]
+
+After providing a question, wait for the student's answer before continuing.
+Once the student has answered several questions, hand control to the Evaluator agent for analysis.
+""",
+        function_choice_behavior=FunctionChoiceBehavior.NoneInvoke(),
+    )
+
+    # Create Resource Curator agent (focused on providing learning materials)
+    resource_curator_agent = ChatCompletionAgent(
+        kernel=kernel,
+        name=RESOURCE_CURATOR_NAME,
+        instructions="""
+You are a specialized resource curator agent. Your role is to provide tailored learning resources to address identified knowledge gaps.
+
+Your responsibilities:
+1. Based on the Evaluator's analysis, identify the most relevant learning materials
+2. Provide clear, concise explanations of concepts the student is struggling with
+3. Present information in multiple formats when appropriate (descriptions, examples, analogies)
+4. Adapt explanations to the student's demonstrated level of understanding
+5. Highlight key differences in commonly confused concepts
+6. Use concrete examples to illustrate abstract ideas
+7. Provide simple exercises or thought experiments to reinforce understanding
+8. Connect new information to concepts the student already understands
+9. Organize information logically, building from foundational to advanced concepts
+10. After providing resources, recommend targeted practice with the Quiz Creator
+
+Sample resource provision format:
+CONCEPT: [Brief name of concept]
+EXPLANATION: [Clear, concise explanation]
+KEY POINTS:
+- [Important point 1]
+- [Important point 2]
+- [Important point 3]
+EXAMPLE: [Concrete example showing the concept in action]
+COMMON MISCONCEPTION: [Address specific confusion the student demonstrated]
+
+When you've provided appropriate resources, hand back to the Tutor agent.
+""",
+        function_choice_behavior=FunctionChoiceBehavior.NoneInvoke(),
+    )
+
+    # Define selection function with simpler logic for four agents
     selection_function = KernelFunctionFromPrompt(
         function_name="selection",
         prompt=f"""
-Examine the provided RESPONSE, CHAT HISTORY, and STUDENT PERFORMANCE to choose the next participant.
+Examine the provided RESPONSE and choose the next participant.
 State only the name of the chosen participant without explanation.
 Never choose the participant named in the RESPONSE.
 
 Choose only from these participants:
-- {TUTOR_NAME}
-- {EVALUATOR_NAME}
+- {TUTOR_NAME} (main conversation agent)
+- {EVALUATOR_NAME} (analyzes performance)
+- {QUIZ_CREATOR_NAME} (creates quizzes)
+- {RESOURCE_CURATOR_NAME} (provides resources)
 
 Rules:
-- If RESPONSE is from user input, it is {TUTOR_NAME}'s turn.
-- If STUDENT PERFORMANCE shows 3+ consecutive wrong answers, choose {EVALUATOR_NAME} to analyze.
-- If RESPONSE is by {EVALUATOR_NAME}, it is {TUTOR_NAME}'s turn.
-- If a pattern of topic-specific errors is detected, choose {EVALUATOR_NAME} for analysis.
+- If RESPONSE is from user input, select {TUTOR_NAME}
+- If CONSECUTIVE WRONG ANSWERS is 3+, select {EVALUATOR_NAME}
+- If RESPONSE is from {TUTOR_NAME} and mentions "quiz" or "test", select {QUIZ_CREATOR_NAME}
+- If RESPONSE is from {EVALUATOR_NAME}, select {RESOURCE_CURATOR_NAME}
+- If RESPONSE is from {RESOURCE_CURATOR_NAME}, select {TUTOR_NAME}
+- If RESPONSE is from {QUIZ_CREATOR_NAME}, select {TUTOR_NAME}
 
 CURRENT STATE: {{{{$current_state}}}}
 CONSECUTIVE WRONG ANSWERS: {{{{$consecutive_wrong}}}}
@@ -268,27 +339,67 @@ RESPONSE:
 {{{{$lastmessage}}}}
 """,
     )
+# - If CURRENT STATE is "quiz", select {QUIZ_CREATOR_NAME}
 
-    # Define termination function - simplified
+    # Define termination function for the four-agent system
     termination_function = KernelFunctionFromPrompt(
         function_name="termination",
         prompt=f"""
-Examine the RESPONSE and determine whether the content has been deemed satisfactory.
-If the content is satisfactory, respond with a single word without explanation: {termination_keyword}.
-If specific suggestions are being provided, it is not satisfactory.
-If no correction is suggested, it is satisfactory.
-If the Evaluator agent has just provided analysis and the Tutor hasn't responded yet, respond with: no.
+    Examine the RESPONSE and determine if the conversation should return to the user.
+    Reply only with: {termination_keyword} (to end agent discussion) or continue (for more agent interaction)
 
-RESPONSE:
-{{{{$lastmessage}}}}
-""",
+    Agent termination rules:
+    1. {TUTOR_NAME}:
+       - TERMINATE when Tutor has answered a question or asked for user input
+       - CONTINUE when Tutor is calling another agent for specialized help
+
+    2. {QUIZ_CREATOR_NAME}:
+       - TERMINATE after presenting a quiz question (user needs to answer)
+       - TERMINATE after providing feedback on an answer
+       - CONTINUE when discussing quiz strategy with other agents
+
+    3. {EVALUATOR_NAME}:
+       - TERMINATE after presenting a complete analysis to the user
+       - CONTINUE when requesting resources from Resource Curator
+       - CONTINUE when providing analysis to Tutor but not to user directly
+
+    4. {RESOURCE_CURATOR_NAME}:
+       - TERMINATE after providing complete learning resources to the user
+       - CONTINUE when gathering information from other agents
+
+    Educational context signals:
+    - TERMINATE when asking the user a practice question
+    - TERMINATE after explaining a concept and checking for understanding
+    - TERMINATE when soliciting the user's thoughts or experience
+    - CONTINUE during ongoing multi-agent educational strategy discussions
+
+    Clear user input indicators (TERMINATE):
+    - Ends with a question mark directly addressing user
+    - Contains "What do you think?", "Your answer?", "Can you tell me"
+    - Contains "Try this question", "Let me know", "Please respond"
+
+    Agent collaboration indicators (CONTINUE):
+    - Contains "@AgentName" requesting specific agent input
+    - Contains "I'll analyze", "Let me assess", "We should consider"
+    - Agent is clearly mid-analysis or mid-explanation to another agent
+
+    CURRENT STATE: {{{{$current_state}}}}
+    CONSECUTIVE WRONG ANSWERS: {{{{$consecutive_wrong}}}}
+    PROBLEM TOPICS: {{{{$problem_topics}}}}
+
+    CHAT HISTORY:
+    {{{{$chat_history}}}}
+
+    RESPONSE:
+    {{{{$lastmessage}}}}
+    """,
     )
 
     history_reducer = ChatHistoryTruncationReducer(target_count=10)
 
     # Create the agent group chat with enhanced configuration
     chat = AgentGroupChat(
-        agents=[tutor_agent, reasoning_agent],
+        agents=[tutor_agent, evaluator_agent, quiz_creator_agent, resource_curator_agent],
         selection_strategy=KernelFunctionSelectionStrategy(
             initial_agent=tutor_agent,
             function=selection_function,
@@ -298,7 +409,7 @@ RESPONSE:
             history_reducer=history_reducer,
         ),
         termination_strategy=KernelFunctionTerminationStrategy(
-            agents=[tutor_agent],
+            agents=[tutor_agent, evaluator_agent, quiz_creator_agent, resource_curator_agent],
             function=termination_function,
             kernel=kernel,
             result_parser=lambda result: termination_keyword in str(result.value[0]).lower(),
@@ -395,18 +506,22 @@ RESPONSE:
         # First add the user message to chat
         await chat.add_chat_message(message=user_input)
         
-        # Then add a system message that contains our context variables
-        # We'll format it in a way that the selection function can extract but won't be visible to the user
-        context_message = f"[SYSTEM: CONTEXT_VARS current_state={context_vars['current_state']} consecutive_wrong={context_vars['consecutive_wrong']} problem_topics={context_vars['problem_topics']}]"
-        
-        # Modify the selection function to look for this special context message
+        # Update the arguments for the selection function properly
+        # This fixes the "Variable not found in the KernelArguments" error
         if hasattr(chat.selection_strategy, 'function'):
-            chat.selection_strategy.arguments = KernelArguments(
-                current_state=context_vars["current_state"],
-                consecutive_wrong=context_vars["consecutive_wrong"],
-                problem_topics=context_vars["problem_topics"],
-                chat_history=context_vars["chat_history"]
-            )
+            # Create a new KernelArguments object with our context variables
+            args = KernelArguments()
+            # Add each key-value pair individually to avoid variable prefix issues
+            args["current_state"] = context_vars["current_state"]
+            args["consecutive_wrong"] = context_vars["consecutive_wrong"]
+            args["problem_topics"] = context_vars["problem_topics"]
+            args["chat_history"] = context_vars["chat_history"]
+            # Assign the arguments to the selection strategy
+            chat.selection_strategy.arguments = args
+            
+            # Also update the termination strategy arguments if it exists
+            if hasattr(chat, 'termination_strategy') and hasattr(chat.termination_strategy, 'function'):
+                chat.termination_strategy.arguments = args
 
         # Look for quiz requests
         if "quiz me on" in user_input.lower() and current_state != TutorState.QUIZ:
@@ -441,14 +556,49 @@ RESPONSE:
                 # Print the content chunk
                 if response.content:
                     print(response.content, end="", flush=True)
+                    
+                    # Capture state transitions based on agent responses
+                    if response.name == QUIZ_CREATOR_NAME:
+                        current_state = TutorState.QUIZ
+                    
+                    elif response.name == EVALUATOR_NAME:
+                        current_state = TutorState.EVALUATION
+                        
+                    elif response.name == RESOURCE_CURATOR_NAME:
+                        current_state = TutorState.RESOURCE
+                        
+                    elif response.name == TUTOR_NAME:
+                        # Check if we're transitioning out of another state
+                        if current_state != TutorState.CHAT and "let's continue" in response.content.lower():
+                            current_state = TutorState.CHAT
             
-            # Check if we need to trigger a review based on performance
+            # Performance evaluation based on the current state
             if current_state == TutorState.QUIZ and student_tracker.should_trigger_review():
-                # In a production system, you'd want to add a message to the chat that triggers the reasoning agent
                 print("\n\n[System: Detected pattern of errors. Initiating learning gap analysis...]")
-                review_request = f"I notice the student has {student_tracker.consecutive_wrong} consecutive wrong answers or is struggling with specific topics. Please analyze the student's performance and identify potential knowledge gaps."
+                review_request = f"@{EVALUATOR_NAME} I notice the student has {student_tracker.consecutive_wrong} consecutive wrong answers or is struggling with specific topics. Please analyze the student's performance and identify potential knowledge gaps."
                 await chat.add_chat_message(message=review_request, role="system")
-                current_state = TutorState.REVIEW
+                current_state = TutorState.EVALUATION
+            
+            # After running a quiz for several questions, request an evaluation
+            if current_state == TutorState.QUIZ and len(student_tracker.questions) >= 5 and len(student_tracker.is_correct) >= 3:
+                print("\n\n[System: Sufficient questions answered. Requesting evaluation...]")
+                
+                # Get performance summary
+                summary = student_tracker.get_performance_summary()
+                
+                # Create evaluation request with performance details
+                eval_request = f"""
+@{EVALUATOR_NAME} Please analyze the student's quiz performance:
+- Total questions: {summary['total_questions']}
+- Correct answers: {summary['total_correct']}
+- Accuracy rate: {summary['accuracy'] * 100:.1f}%
+- Consecutive wrong answers: {summary['consecutive_wrong']}
+- Problem topics: {', '.join(summary['problem_topics']) if summary['problem_topics'] else 'None identified yet'}
+                
+Please identify any knowledge gaps or patterns in the student's understanding.
+"""
+                await chat.add_chat_message(message=eval_request, role="system")
+                current_state = TutorState.EVALUATION
                     
         except Exception as e:
             if "Chat is already complete" in str(e):
@@ -456,8 +606,8 @@ RESPONSE:
                 pass
             else:
                 print(f"\nError during chat: {e}")
-
-        # Reset the completion state for the next conversation turn
+        
+        # Clear the completion flag for the next round
         chat.is_complete = False
 
 if __name__ == "__main__":
