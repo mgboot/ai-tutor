@@ -27,7 +27,7 @@ agent that work together to provide educational assistance with pattern detectio
 
 # Define agent names
 TUTOR_NAME = "Tutor"
-EVALUATOR_NAME = "Evaluator"
+EVALUATOR_NAME = "Evaluator" 
 QUIZ_CREATOR_NAME = "QuizCreator"
 RESOURCE_CURATOR_NAME = "ResourceCurator"
 
@@ -194,21 +194,29 @@ async def main():
         kernel=kernel,
         name=TUTOR_NAME,
         instructions="""
-You are an intelligent tutor named AI Tutor. Your primary role is to handle direct conversation with the student.
+You are an intelligent tutor named AI Tutor. You are the ONLY agent that directly communicates with the student.
 
 Your responsibilities:
-- Be the main point of conversation with the student
-- Answer general knowledge questions with clear explanations
-- Provide friendly, accessible guidance
-- When a student is struggling, coordinate with other agents
-- Respond to the student's questions and maintain the conversation flow
-- Maintain a friendly, encouraging, and educational tone
-- Acknowledge correct answers and offer supportive feedback
-- When it's time for an assessment, hand over to the Quiz Creator
-- When evaluation is needed, refer to the Evaluator
-- When resources are needed, pass to the Resource Curator
+1. Be the primary and ONLY interface between the system and the student
+2. Present questions from the QuizCreator to the student EXACTLY as written
+3. Deliver evaluations from the Evaluator to the student
+4. Share resources from the ResourceCurator with the student
+5. Maintain a friendly, encouraging, and educational tone throughout
+6. Acknowledge correct answers with positive feedback
+7. For incorrect answers, provide the correct answer and brief explanation
 
-Focus on being conversational and maintaining rapport with the student. You're the "face" of the system.
+When working with other agents:
+- When the QuizCreator generates a question, copy and paste it EXACTLY to the student - DO NOT rewrite it or create your own question
+- Simply add a brief introduction like "Here's your next question:" before presenting the QuizCreator's question
+- When the Evaluator identifies knowledge gaps, explain these insights to the student in a supportive way
+- When the ResourceCurator provides learning materials, present them to the student in a structured format
+
+CRITICAL QUIZ INSTRUCTIONS:
+- NEVER create your own quiz questions - ONLY copy and present the QuizCreator's questions verbatim
+- Always use multiple choice format from QuizCreator with options A, B, C, and D
+- After 3 consecutive wrong answers, automatically engage the Evaluator
+
+Remember: You are the ONLY voice the student hears. All other agents communicate through you.
 """,
         function_choice_behavior=FunctionChoiceBehavior.NoneInvoke(),
     )
@@ -244,11 +252,11 @@ After your analysis, ask the Resource Curator to provide appropriate learning ma
         kernel=kernel,
         name=QUIZ_CREATOR_NAME,
         instructions="""
-You are a specialized quiz creator agent. Your role is to create effective educational quizzes.
+You are a specialized quiz creator agent. Your role is to create effective educational multiple-choice quizzes.
 
 Your responsibilities:
-1. Generate clear, well-structured quiz questions on the requested topic
-2. Design multiple-choice quizzes with 4 options (A, B, C, D) per question
+1. Generate clear, well-structured multiple-choice quiz questions on the requested topic
+2. Always design questions with 4 options (A, B, C, D) per question
 3. Ask ONE question at a time - wait for the student to answer before providing the next question
 4. Always label each question with its topic/subtopic for categorization
 5. Create questions that test understanding, not just memorization
@@ -266,8 +274,9 @@ B) [Second option]
 C) [Third option]
 D) [Fourth option]
 
-After providing a question, wait for the student's answer before continuing.
-Once the student has answered several questions, hand control to the Evaluator agent for analysis.
+IMPORTANT: DO NOT directly interact with the student. Provide your questions to the Tutor agent who will present them to the student.
+After generating a question, hand control to the Tutor agent who will present it to the student.
+DO NOT ask the student what type of questions they want or any other interaction questions.
 """,
         function_choice_behavior=FunctionChoiceBehavior.NoneInvoke(),
     )
@@ -310,89 +319,65 @@ When you've provided appropriate resources, hand back to the Tutor agent.
     selection_function = KernelFunctionFromPrompt(
         function_name="selection",
         prompt=f"""
-Examine the provided RESPONSE and choose the next participant.
+Examine the provided RESPONSE, CONSECUTIVE WRONG ANSWERS, and CURRENT STATE to choose the next participant.
 State only the name of the chosen participant without explanation.
 Never choose the participant named in the RESPONSE.
 
 Choose only from these participants:
-- {TUTOR_NAME} (main conversation agent)
-- {EVALUATOR_NAME} (analyzes performance)
-- {QUIZ_CREATOR_NAME} (creates quizzes)
-- {RESOURCE_CURATOR_NAME} (provides resources)
+- {TUTOR_NAME} (main conversation agent - ONLY agent that speaks directly to the user)
+- {EVALUATOR_NAME} (analyzes performance when student struggles)
+- {QUIZ_CREATOR_NAME} (creates multiple-choice questions)
+- {RESOURCE_CURATOR_NAME} (provides learning materials after evaluation)
 
-Rules:
-- If RESPONSE is from user input, select {TUTOR_NAME}
-- If CONSECUTIVE WRONG ANSWERS is 3+, select {EVALUATOR_NAME}
-- If RESPONSE is from {TUTOR_NAME} and mentions "quiz" or "test", select {QUIZ_CREATOR_NAME}
-- If RESPONSE is from {EVALUATOR_NAME}, select {RESOURCE_CURATOR_NAME}
-- If RESPONSE is from {RESOURCE_CURATOR_NAME}, select {TUTOR_NAME}
-- If RESPONSE is from {QUIZ_CREATOR_NAME}, select {TUTOR_NAME}
+KEY SELECTION RULES:
+1. If RESPONSE is from user input:
+   - If CURRENT STATE is "quiz", select {QUIZ_CREATOR_NAME} to generate a question
+   - Otherwise, select {TUTOR_NAME}
+
+2. Critical agent flow rules:
+   - If RESPONSE is from {QUIZ_CREATOR_NAME}, ALWAYS select {TUTOR_NAME} next to present the question
+   - If RESPONSE is from {EVALUATOR_NAME}, select {RESOURCE_CURATOR_NAME} next
+   - If RESPONSE is from {RESOURCE_CURATOR_NAME}, select {TUTOR_NAME} next
+   - If RESPONSE is from {TUTOR_NAME} and contains "quiz" or "test", select {QUIZ_CREATOR_NAME} next
+
+3. Evaluation triggers:
+   - If CURRENT STATE is "quiz" AND CONSECUTIVE WRONG ANSWERS is 3+, select {EVALUATOR_NAME}
 
 CURRENT STATE: {{{{$current_state}}}}
 CONSECUTIVE WRONG ANSWERS: {{{{$consecutive_wrong}}}}
 PROBLEM TOPICS: {{{{$problem_topics}}}}
 
-CHAT HISTORY:
-{{{{$chat_history}}}}
-
 RESPONSE:
 {{{{$lastmessage}}}}
 """,
     )
-# - If CURRENT STATE is "quiz", select {QUIZ_CREATOR_NAME}
 
-    # Define termination function for the four-agent system
+    # Define termination function for the four-agent system - simplified to prevent loops
     termination_function = KernelFunctionFromPrompt(
         function_name="termination",
         prompt=f"""
-    Examine the RESPONSE and determine if the conversation should return to the user.
-    Reply only with: {termination_keyword} (to end agent discussion) or continue (for more agent interaction)
+Examine the current RESPONSE and determine if the conversation should continue or terminate.
+Reply only with: {termination_keyword} or continue
 
-    Agent termination rules:
-    1. {TUTOR_NAME}:
-       - TERMINATE when Tutor has answered a question or asked for user input
-       - CONTINUE when Tutor is calling another agent for specialized help
+STRICT RULES TO PREVENT ENDLESS AGENT DISCUSSIONS:
+1. If the Tutor has responded to the user's input: {termination_keyword}
+2. If any agent other than Tutor has spoken: continue (so Tutor can relay to the user)
 
-    2. {QUIZ_CREATOR_NAME}:
-       - TERMINATE after presenting a quiz question (user needs to answer)
-       - TERMINATE after providing feedback on an answer
-       - CONTINUE when discussing quiz strategy with other agents
+Agent-specific rules:
+- If RESPONSE appears to be from {QUIZ_CREATOR_NAME}: continue (so Tutor can present it)
+- If RESPONSE appears to be from {EVALUATOR_NAME}: continue (so ResourceCurator can provide materials)
+- If RESPONSE appears to be from {RESOURCE_CURATOR_NAME}: continue (so Tutor can present them)
+- If RESPONSE appears to be from {TUTOR_NAME} and is a complete thought: {termination_keyword}
 
-    3. {EVALUATOR_NAME}:
-       - TERMINATE after presenting a complete analysis to the user
-       - CONTINUE when requesting resources from Resource Curator
-       - CONTINUE when providing analysis to Tutor but not to user directly
+REMEMBER: The goal is ONE meaningful agent interaction per user input, not lengthy agent discussions.
 
-    4. {RESOURCE_CURATOR_NAME}:
-       - TERMINATE after providing complete learning resources to the user
-       - CONTINUE when gathering information from other agents
+CURRENT STATE: {{{{$current_state}}}}
+CONSECUTIVE WRONG ANSWERS: {{{{$consecutive_wrong}}}}
+PROBLEM TOPICS: {{{{$problem_topics}}}}
 
-    Educational context signals:
-    - TERMINATE when asking the user a practice question
-    - TERMINATE after explaining a concept and checking for understanding
-    - TERMINATE when soliciting the user's thoughts or experience
-    - CONTINUE during ongoing multi-agent educational strategy discussions
-
-    Clear user input indicators (TERMINATE):
-    - Ends with a question mark directly addressing user
-    - Contains "What do you think?", "Your answer?", "Can you tell me"
-    - Contains "Try this question", "Let me know", "Please respond"
-
-    Agent collaboration indicators (CONTINUE):
-    - Contains "@AgentName" requesting specific agent input
-    - Contains "I'll analyze", "Let me assess", "We should consider"
-    - Agent is clearly mid-analysis or mid-explanation to another agent
-
-    CURRENT STATE: {{{{$current_state}}}}
-    CONSECUTIVE WRONG ANSWERS: {{{{$consecutive_wrong}}}}
-    PROBLEM TOPICS: {{{{$problem_topics}}}}
-
-    CHAT HISTORY:
-    {{{{$chat_history}}}}
-
-    RESPONSE:
-    {{{{$lastmessage}}}}
-    """,
+RESPONSE:
+{{{{$lastmessage}}}}
+""",
     )
 
     history_reducer = ChatHistoryTruncationReducer(target_count=10)
@@ -409,12 +394,13 @@ RESPONSE:
             history_reducer=history_reducer,
         ),
         termination_strategy=KernelFunctionTerminationStrategy(
-            agents=[tutor_agent, evaluator_agent, quiz_creator_agent, resource_curator_agent],
+            agents=[tutor_agent, quiz_creator_agent, resource_curator_agent, evaluator_agent],
             function=termination_function,
             kernel=kernel,
             result_parser=lambda result: termination_keyword in str(result.value[0]).lower(),
             history_variable_name="lastmessage",
-            maximum_iterations=5,
+            # Reduced maximum iterations to prevent self-talk loops
+            maximum_iterations=2,
             history_reducer=history_reducer,
         ),
     )
